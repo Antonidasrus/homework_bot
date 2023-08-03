@@ -1,50 +1,38 @@
-import os
 import logging
 import requests
 import telegram
-
 import time
-from dotenv import load_dotenv
-from exceptions import StatusCode, EmptyListException, SendException
 
-load_dotenv()
-
-
-PRACTICUM_TOKEN = os.getenv('PRACTICUM_TOKEN')
-TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
-TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
-
-RETRY_PERIOD = 600
-ENDPOINT = 'https://practicum.yandex.ru/api/user_api/homework_statuses/'
-HEADERS = {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
-
-
-HOMEWORK_VERDICTS = {
-    'approved': 'Работа проверена: ревьюеру всё понравилось. Ура!',
-    'reviewing': 'Работа взята на проверку ревьюером.',
-    'rejected': 'Работа проверена: у ревьюера есть замечания.'
-}
-
+from exceptions import (StatusCode, EmptyListException,
+                        SendException, GetApiException)
+from http import HTTPStatus
+from typing import NoReturn
+from config import (PRACTICUM_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_TOKEN,
+                    RETRY_PERIOD, ENDPOINT, HOMEWORK_VERDICTS, HEADERS)
 
 logger = logging.getLogger(__name__)
+logging.basicConfig(format='%(asctime)s, %(funcName)s, %(levelno)s')
 
 
-def check_tokens():
+def check_tokens() -> bool:
     """Функция для проверки токенов."""
     return all([PRACTICUM_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_TOKEN])
 
 
-def send_message(bot, message):
+def send_message(bot: telegram.Bot, message: str) -> None:
     """Функция отправки сообщения."""
+    logging.debug('Начинаем отправку сообщения...')
     try:
         bot.send_message(TELEGRAM_CHAT_ID, message)
-        logging.debug('Сообщение отправлено.')
-    except SendException:
+    except Exception:
         logging.error('Не удалось отправить сообщение.')
+        raise SendException('Не удалось отправить сообщение.')
+    logging.debug('Сообщение отправлено.')
 
 
-def get_api_answer(timestamp):
+def get_api_answer(timestamp) -> list:
     """Функция для получения ответа от сервера."""
+    logging.debug('Получаем новые статусы...')
     PAYLOAD = {'from_date': timestamp}
     try:
         homework_statuses = requests.get(ENDPOINT,
@@ -52,30 +40,33 @@ def get_api_answer(timestamp):
                                          params=PAYLOAD)
     except requests.RequestException:
         logging.error('Не удалось получить ответ от сервера.')
+        raise GetApiException('Не удалось получить ответ от сервера.')
 
-    if homework_statuses.status_code != 200:
-        logging.error
-        raise StatusCode('Ответ от сервера отличный от 200.')
+    if homework_statuses.status_code != HTTPStatus.OK:
+        error_message = ('Ошибка при получении работ. Статус-код:'
+                         f'{homework_statuses.status_code}')
+        logging.error(error_message)
+        raise StatusCode(error_message)
     return homework_statuses.json()
 
 
-def check_response(response):
+def check_response(response) -> None:
     """Функция для проверки полученного ответа."""
-    if type(response) is not dict:
+    if not isinstance(response, dict):
         logging.error('Должен возвращаться словарь dict')
         raise TypeError('Должен возвращаться словарь dict')
     if 'homeworks' not in response or 'current_date' not in response:
         logging.error('Отсутствуют некоторые обязательные поля')
         raise KeyError('Отсутствуют некоторые обязательные поля')
-    if type(response.get('homeworks')) is not list:
+    if not isinstance(response.get('homeworks'), list):
         logging.error('homeworks не список')
         raise TypeError('homeworks не список')
-    if len(response.get('homeworks')) == 0:
+    if not response.get('homeworks'):
         logging.error('Список домашек пуст')
-        raise EmptyListException
+        raise EmptyListException('Список домашек пуст')
 
 
-def parse_status(homework):
+def parse_status(homework) -> str:
     """Функция для вывода статуса домашки."""
     if 'homework_name' not in homework:
         logging.error('Домашки с таким названием не существует')
@@ -89,13 +80,14 @@ def parse_status(homework):
     return f'Изменился статус проверки работы "{homework_name}". {verdict}'
 
 
-def main():
+def main() -> NoReturn:
     """Основная логика работы бота."""
     if not check_tokens():
         logging.critical('Не хватает какого-то токена.')
         exit()
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
     timestamp = int(time.time())
+    previous_message = 0
 
     while True:
         try:
@@ -107,10 +99,14 @@ def main():
                 continue
             for homework in homeworks:
                 verdict_string = parse_status(homework)
-                send_message(bot, verdict_string)
+                if not previous_message:
+                    previous_message = verdict_string
+                    send_message(bot, verdict_string)
+                if verdict_string != previous_message:
+                    send_message(bot, verdict_string)
                 logging.debug(f'Отправлено сообщение: {verdict_string}')
-        except Exception:
-            message = 'Ошибка'
+        except Exception as e:
+            message = f'Ошибка {e}'
             logging.error(message)
             send_message(bot, message)
         finally:
