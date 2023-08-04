@@ -30,7 +30,7 @@ def send_message(bot: telegram.Bot, message: str) -> None:
     logging.debug('Сообщение отправлено.')
 
 
-def get_api_answer(timestamp) -> list:
+def get_api_answer(timestamp: int) -> list:
     """Функция для получения ответа от сервера."""
     logging.debug('Получаем новые статусы...')
     PAYLOAD = {'from_date': timestamp}
@@ -50,7 +50,7 @@ def get_api_answer(timestamp) -> list:
     return homework_statuses.json()
 
 
-def check_response(response) -> None:
+def check_response(response: dict) -> None:
     """Функция для проверки полученного ответа."""
     if not isinstance(response, dict):
         logging.error('Должен возвращаться словарь dict')
@@ -66,7 +66,7 @@ def check_response(response) -> None:
         raise EmptyListException('Список домашек пуст')
 
 
-def parse_status(homework) -> str:
+def parse_status(homework: dict) -> str:
     """Функция для вывода статуса домашки."""
     if 'homework_name' not in homework:
         logging.error('Домашки с таким названием не существует')
@@ -87,7 +87,7 @@ def main() -> NoReturn:
         exit()
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
     timestamp = int(time.time())
-    previous_message = 0
+    previous_message = ''
 
     while True:
         try:
